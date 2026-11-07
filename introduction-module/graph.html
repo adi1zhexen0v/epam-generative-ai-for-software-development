@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vocabulary Graph</title>
+    <style>
+      :root { --bg: #f8fafc; --surface: #fff; --text: #1e293b; --muted: #64748b; --line: #e2e8f0; --explicit: #0d9488; --implicit: #f59e0b; --term: #0f766e; --case: #7c3aed; --dot-r: 6px; --case-base: 28px; --case-step: 14px; }
+      body { margin: 0; padding: 40px 16px; font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); }
+      main { max-width: 1200px; margin: 0 auto; }
+      h1 { text-align: center; margin: 0 0 24px; }
+      .filters { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+      .filters button { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font: inherit; font-size: 14px; color: #334155; background: var(--surface); border: 1px solid #cbd5e1; border-radius: 6px; cursor: pointer; }
+      .filters button[aria-pressed="true"] { color: #fff; background: var(--text); border-color: var(--text); }
+      .swatch { width: 24px; border-top: 3px solid var(--explicit); }
+      .swatch.implicit { border-top-color: var(--implicit); border-top-style: dashed; }
+      .graph { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+      .graph svg { display: block; width: 100%; min-width: 960px; }
+      .edge { fill: none; opacity: 0.8; transition: opacity 0.2s; }
+      .edge.explicit { stroke: var(--explicit); }
+      .edge.implicit { stroke: var(--implicit); stroke-dasharray: 6 4; }
+      .node { cursor: pointer; outline: none; transition: opacity 0.2s; }
+      .node circle { stroke: var(--surface); stroke-width: 2px; }
+      .node.term circle { fill: var(--term); }
+      .node.case circle { fill: var(--case); }
+      .node:focus-visible circle { stroke: var(--text); }
+      .label { fill: #334155; font-size: 13px; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+      .label.name { fill: var(--text); font-size: 14px; font-weight: 600; }
+      .label.count { fill: var(--muted); font-size: 12px; }
+      .node.off { opacity: 0.3; cursor: default; }
+      .focus .node, .focus .edge { opacity: 0.15; }
+      .focus .node.active, .focus .edge.active { opacity: 1; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Vocabulary Graph</h1>
+      <div class="filters">
+        <button data-filter="all">All references</button>
+        <button data-filter="explicit"><span class="swatch"></span>Explicit mentions</button>
+        <button data-filter="implicit">
+          <span class="swatch implicit"></span>Implicit references
+        </button>
+      </div>
+      <div class="graph">
+        <svg
+          id="graph"
+          viewBox="0 0 1200 800"
+          role="img"
+          aria-label="Dictionary terms linked to use cases"
+        ></svg>
+      </div>
+    </main>
+    <script>
+      const TERMS = [
+        "Large Language Model (LLM)",
+        "AI Model",
+        "Context window",
+        "AI Agent",
+        "Model Context Protocol (MCP)",
+        "Skill",
+        "Reasoning effort",
+        "Multi-Agent system",
+        "Agent orchestration",
+        "Context engineering",
+        "Code review",
+        "Test-Driven development (TDD)",
+        "Text-to-Speech (TTS)",
+        "Generative AI",
+        "Acceptance criteria",
+        "Prompt",
+        "Deepfake"
+      ];
+      const USE_CASES = [
+        "Software Development",
+        "Education",
+        "Voice Generation",
+        "UI/UX Design",
+        "Image & Video Generation"
+      ];
+      const LINKS = [
+        ["Large Language Model (LLM)", 0, 1, 0],
+        ["AI Model", 0, 3, 0],
+        ["Context window", 0, 1, 0],
+        ["AI Agent", 0, 4, 0],
+        ["Model Context Protocol (MCP)", 0, 1, 0],
+        ["Skill", 0, 1, 0],
+        ["Reasoning effort", 0, 1, 0],
+        ["Multi-Agent system", 0, 1, 0],
+        ["Agent orchestration", 0, 1, 0],
+        ["Context engineering", 0, 1, 0],
+        ["Code review", 0, 1, 0],
+        ["Test-Driven development (TDD)", 0, 1, 0],
+        ["Text-to-Speech (TTS)", 2, 1, 0],
+        ["Generative AI", 0, 1, 0],
+        ["Generative AI", 1, 1, 0],
+        ["Generative AI", 2, 1, 0],
+        ["Generative AI", 3, 1, 0],
+        ["Generative AI", 4, 2, 0],
+        ["Acceptance criteria", 0, 0, 1],
+        ["Acceptance criteria", 1, 0, 1],
+        ["Acceptance criteria", 3, 1, 0],
+        ["Acceptance criteria", 4, 0, 1],
+        ["Prompt", 0, 0, 1],
+        ["Prompt", 3, 0, 1],
+        ["Prompt", 4, 1, 0],
+        ["Deepfake", 4, 1, 0]
+      ];
+      const NS = "http://www.w3.org/2000/svg";
+      const CX = 600;
+      const CY = 440;
+      const SPREAD = 300;
+      const ROW = 30;
+      const OFFSET = 40;
+      const LINE_BASE = 1.5;
+      const LINE_STEP = 1.5;
+      const styles = getComputedStyle(document.documentElement);
+      const DOT_R = parseFloat(styles.getPropertyValue("--dot-r"));
+      const CASE_BASE = parseFloat(styles.getPropertyValue("--case-base"));
+      const CASE_STEP = parseFloat(styles.getPropertyValue("--case-step"));
+      const svg = document.querySelector("#graph");
+      const buttons = document.querySelectorAll("[data-filter]");
+      let nodes = [];
+      let edges = [];
+
+      function create(tag, attributes, parent, text) {
+        const element = document.createElementNS(NS, tag);
+        for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+        if (text) element.textContent = text;
+        parent.append(element);
+        return element;
+      }
+
+      function caseRadius(count) {
+        return CASE_BASE + CASE_STEP * Math.sqrt(count);
+      }
+
+      function layout() {
+        const cases = USE_CASES.map((_, i) => {
+          const angle = ((-90 + (i * 360) / USE_CASES.length) * Math.PI) / 180;
+          const count = LINKS.filter((link) => link[1] === i).length;
+          return {
+            x: CX + SPREAD * Math.cos(angle),
+            y: CY + SPREAD * Math.sin(angle),
+            radius: caseRadius(count)
+          };
+        });
+        const points = [];
+        const owned = USE_CASES.map(() => []);
+        TERMS.forEach((term, t) => {
+          const linked = LINKS.filter((link) => link[0] === term).map((link) => cases[link[1]]);
+          if (linked.length === 1) {
+            owned[LINKS.find((link) => link[0] === term)[1]].push(t);
+            return;
+          }
+          points[t] = {
+            x: linked.reduce((sum, c) => sum + c.x, 0) / linked.length,
+            y: linked.reduce((sum, c) => sum + c.y, 0) / linked.length
+          };
+        });
+        owned.forEach((list, c) => {
+          const center = cases[c];
+          const sides = Math.abs(center.x - CX) < 1 ? [-1, 1] : [Math.sign(center.x - CX)];
+          sides.forEach((side, s) => {
+            const column = list.filter((_, k) => k % sides.length === s);
+            column.forEach((t, row) => {
+              points[t] = {
+                x: center.x + side * (center.radius + OFFSET),
+                y: center.y + (row - (column.length - 1) / 2) * ROW
+              };
+            });
+          });
+        });
+        return { cases, points };
+      }
+
+      function drawEdge(type, count, from, to) {
+        return create(
+          "line",
+          {
+            class: `edge ${type}`,
+            x1: from.x,
+            y1: from.y,
+            x2: to.x,
+            y2: to.y,
+            "stroke-width": LINE_BASE + LINE_STEP * Math.sqrt(count)
+          },
+          svg
+        );
+      }
+
+      function drawCase(name, count, center) {
+        const radius = caseRadius(count);
+        const y = center.y < CY ? center.y - radius - 22 : center.y + radius + 18;
+        const group = create(
+          "g",
+          { class: `node case${count === 0 ? " off" : ""}`, tabindex: count === 0 ? -1 : 0 },
+          svg
+        );
+        create("circle", { cx: center.x, cy: center.y, r: radius }, group);
+        create(
+          "text",
+          { class: "label name", x: center.x, y, "text-anchor": "middle" },
+          group,
+          name
+        );
+        create(
+          "text",
+          { class: "label count", x: center.x, y: y + 15, "text-anchor": "middle" },
+          group,
+          `${count} linked ${count === 1 ? "term" : "terms"}`
+        );
+        return group;
+      }
+
+      function drawTerm(name, point, linked) {
+        const side = Math.sign(point.x - CX);
+        const centered = Math.abs(point.x - CX) < 1;
+        const group = create(
+          "g",
+          { class: `node term${linked ? "" : " off"}`, tabindex: linked ? 0 : -1 },
+          svg
+        );
+        create("circle", { cx: point.x, cy: point.y, r: DOT_R }, group);
+        create(
+          "text",
+          {
+            class: "label",
+            x: centered ? point.x : point.x + side * (DOT_R + 8),
+            y: centered ? point.y + DOT_R + 18 : point.y + 4,
+            "text-anchor": centered ? "middle" : side > 0 ? "start" : "end"
+          },
+          group,
+          name
+        );
+        return group;
+      }
+
+      function highlight(kind, index) {
+        const field = kind === "term" ? "term" : "useCase";
+        const active = new Set();
+        if (index !== null) {
+          active.add(`${kind}:${index}`);
+          edges
+            .filter((edge) => edge[field] === index)
+            .forEach((edge) => {
+              active.add(`term:${edge.term}`);
+              active.add(`case:${edge.useCase}`);
+            });
+        }
+        svg.classList.toggle("focus", index !== null);
+        nodes.forEach((node) =>
+          node.element.classList.toggle("active", active.has(`${node.kind}:${node.index}`))
+        );
+        edges.forEach((edge) =>
+          edge.element.classList.toggle("active", index !== null && edge[field] === index)
+        );
+      }
+
+      function addNodeListeners() {
+        nodes.forEach((node) => {
+          const show = () =>
+            !node.element.classList.contains("off") && highlight(node.kind, node.index);
+          const hide = () => highlight(node.kind, null);
+          node.element.addEventListener("pointerenter", show);
+          node.element.addEventListener("focus", show);
+          node.element.addEventListener("pointerleave", hide);
+          node.element.addEventListener("blur", hide);
+        });
+      }
+
+      function addFilterListeners() {
+        buttons.forEach((button) =>
+          button.addEventListener("click", () => render(button.dataset.filter))
+        );
+      }
+
+      function render(filter) {
+        svg.replaceChildren();
+        svg.classList.remove("focus");
+        const showExplicit = filter !== "implicit";
+        const showImplicit = filter !== "explicit";
+        const links = LINKS.map(([name, useCase, explicit, implicit]) => ({
+          term: TERMS.indexOf(name),
+          useCase,
+          explicit: showExplicit ? explicit : 0,
+          implicit: showImplicit ? implicit : 0
+        })).filter((link) => link.explicit > 0 || link.implicit > 0);
+        const { cases, points } = layout();
+        edges = [];
+        nodes = [];
+        links.forEach((link) => {
+          ["explicit", "implicit"].forEach((type) => {
+            if (link[type] === 0) return;
+            const element = drawEdge(type, link[type], points[link.term], cases[link.useCase]);
+            edges.push({ term: link.term, useCase: link.useCase, element });
+          });
+        });
+        USE_CASES.forEach((name, i) => {
+          const count = links.filter((link) => link.useCase === i).length;
+          nodes.push({ kind: "case", index: i, element: drawCase(name, count, cases[i]) });
+        });
+        TERMS.forEach((name, i) => {
+          const linked = links.some((link) => link.term === i);
+          nodes.push({ kind: "term", index: i, element: drawTerm(name, points[i], linked) });
+        });
+        buttons.forEach((button) =>
+          button.setAttribute("aria-pressed", button.dataset.filter === filter)
+        );
+        addNodeListeners();
+      }
+
+      addFilterListeners();
+      render("all");
+    </script>
+  </body>
+</html>
